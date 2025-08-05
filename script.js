@@ -4,25 +4,42 @@ const guessInput = document.getElementById("guessInput");
 const status = document.getElementById("status");
 
 let isDrawing = false;
-let peer = new Peer();
-let conn;
 let isDrawer = false;
+let conn;
+let peer;
 let secretWord = "";
 let wordList = ["apple", "car", "house", "dog", "pizza", "sun"];
+let lastX, lastY;
+let connected = false;
+let isHost = false;
 
+function generateWord() {
+  return wordList[Math.floor(Math.random() * wordList.length)];
+}
+
+// Init Peer
+peer = new Peer();
 peer.on("open", (id) => {
   document.getElementById("yourId").textContent = `Your ID: ${id}`;
 });
 
 peer.on("connection", (connection) => {
+  if (connected) return;
   conn = connection;
+  isHost = true;
+  connected = true;
   setupConnection();
-  startRound();
+  setTimeout(() => {
+    startRound(); // Host startet Spiel
+  }, 500);
 });
 
 function connect() {
+  if (connected) return;
   const targetId = document.getElementById("roomInput").value;
   conn = peer.connect(targetId);
+  connected = true;
+  isHost = false;
   setupConnection();
 }
 
@@ -30,38 +47,44 @@ function setupConnection() {
   conn.on("data", (data) => {
     if (data.type === "draw") {
       drawLine(data.fromX, data.fromY, data.toX, data.toY);
+    } else if (data.type === "start") {
+      isDrawer = false;
+      status.textContent = "Guess the word!";
+      clearCanvas();
     } else if (data.type === "word") {
-      status.textContent = "Draw this: " + data.word;
-      isDrawer = true;
       secretWord = data.word;
+      isDrawer = true;
+      status.textContent = "Draw this: " + secretWord;
+      clearCanvas();
     } else if (data.type === "guess") {
       if (!isDrawer) return;
       if (data.text.toLowerCase() === secretWord.toLowerCase()) {
         conn.send({ type: "win" });
-        status.textContent = "They guessed it!";
+        status.textContent = "They guessed it! 🎉";
         setTimeout(startRound, 2000);
       }
     } else if (data.type === "win") {
-      status.textContent = "You guessed it!";
+      status.textContent = "You guessed it! 🎉";
       setTimeout(startRound, 2000);
     }
   });
 }
 
 function startRound() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  clearCanvas();
   isDrawer = !isDrawer;
 
   if (isDrawer) {
-    secretWord = wordList[Math.floor(Math.random() * wordList.length)];
+    secretWord = generateWord();
     status.textContent = "Draw this: " + secretWord;
     conn.send({ type: "word", word: secretWord });
   } else {
     status.textContent = "Guess the word!";
+    conn.send({ type: "start" });
   }
 }
 
-// Drawing logic
+// Drawing
 canvas.addEventListener("mousedown", (e) => {
   if (!isDrawer) return;
   isDrawing = true;
@@ -87,6 +110,10 @@ function drawLine(x1, y1, x2, y2) {
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
+}
+
+function clearCanvas() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
 // Guessing
