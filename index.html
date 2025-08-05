@@ -1,29 +1,168 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Quick Draw</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>🎨 Draw & Guess</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0; padding: 0;
+      background: #f7f7f7;
+      text-align: center;
+    }
+
+    h2 { margin: 16px; }
+
+    #setup, #game { margin-top: 20px; }
+
+    #canvas {
+      border: 2px solid #444;
+      background: white;
+      cursor: crosshair;
+    }
+
+    input, button {
+      padding: 8px;
+      margin: 4px;
+      border-radius: 5px;
+      border: 1px solid #aaa;
+    }
+
+    #guessInput {
+      width: 200px;
+    }
+
+    #status {
+      margin-top: 10px;
+      font-weight: bold;
+      color: #444;
+    }
+  </style>
 </head>
 <body>
 
-  <div class="top">
-    <input type="text" id="roomInput" placeholder="Enter Room ID" />
-    <button onclick="connect()">Connect</button>
-    <span id="yourId"></span>
+  <h2>🎨 Draw & Guess (Peer-to-Peer)</h2>
+
+  <div id="setup">
+    <p>🆔 Deine ID: <span id="yourId">...</span></p>
+    <input id="peerInput" placeholder="Partner-ID" />
+    <button onclick="connect()">Verbinden</button>
   </div>
 
-  <div id="game">
-    <canvas id="canvas" width="600" height="400"></canvas>
-
-    <div id="info">
-      <p id="status">Waiting...</p>
-      <input type="text" id="guessInput" placeholder="Guess..." />
-    </div>
+  <div id="game" style="display: none;">
+    <canvas id="canvas" width="400" height="300"></canvas><br />
+    <input id="guessInput" placeholder="Rate das Wort..." />
+    <p id="status"></p>
   </div>
 
+  <!-- PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="script.js"></script>
+
+  <script>
+    const peer = new Peer();
+    let conn;
+    let isDrawing = false;
+    let isDrawer = false;
+    let currentWord = "";
+    const words = ["Haus", "Auto", "Baum", "Katze", "Hund", "Fisch", "Pizza", "Ball", "Zug", "Computer"];
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const guessInput = document.getElementById("guessInput");
+    const status = document.getElementById("status");
+
+    peer.on("open", (id) => {
+      document.getElementById("yourId").textContent = id;
+    });
+
+    peer.on("connection", (connection) => {
+      conn = connection;
+      setupConnection();
+      isDrawer = true; // Host startet
+      startRound();
+    });
+
+    function connect() {
+      const targetId = document.getElementById("peerInput").value;
+      conn = peer.connect(targetId);
+      setupConnection();
+    }
+
+    function setupConnection() {
+      conn.on("data", (data) => {
+        if (data.type === "draw") {
+          draw(data.x1, data.y1, data.x2, data.y2);
+        }
+        if (data.type === "word") {
+          isDrawer = false;
+          currentWord = data.word;
+          status.textContent = "Rate das Wort!";
+        }
+        if (data.type === "guess" && isDrawer) {
+          if (data.text.toLowerCase() === currentWord.toLowerCase()) {
+            conn.send({ type: "correct" });
+            status.textContent = "✅ Richtig! Nächste Runde...";
+            setTimeout(startRound, 2000);
+          }
+        }
+        if (data.type === "correct") {
+          status.textContent = "🎉 Du hast richtig geraten!";
+          setTimeout(startRound, 2000);
+        }
+      });
+
+      document.getElementById("setup").style.display = "none";
+      document.getElementById("game").style.display = "block";
+    }
+
+    function startRound() {
+      clearCanvas();
+      isDrawer = !isDrawer;
+      if (isDrawer) {
+        currentWord = words[Math.floor(Math.random() * words.length)];
+        status.textContent = "Zeichne: " + currentWord;
+        conn.send({ type: "word", word: currentWord });
+      } else {
+        status.textContent = "Rate das Wort!";
+      }
+    }
+
+    canvas.addEventListener("mousedown", (e) => {
+      if (!isDrawer) return;
+      isDrawing = true;
+      lastX = e.offsetX;
+      lastY = e.offsetY;
+    });
+
+    canvas.addEventListener("mouseup", () => isDrawing = false);
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (!isDrawing || !isDrawer) return;
+      draw(lastX, lastY, e.offsetX, e.offsetY);
+      conn.send({ type: "draw", x1: lastX, y1: lastY, x2: e.offsetX, y2: e.offsetY });
+      lastX = e.offsetX;
+      lastY = e.offsetY;
+    });
+
+    function draw(x1, y1, x2, y2) {
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    function clearCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    guessInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter" && !isDrawer) {
+        conn.send({ type: "guess", text: guessInput.value });
+        guessInput.value = "";
+      }
+    });
+  </script>
 </body>
 </html>
