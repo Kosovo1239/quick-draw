@@ -2,137 +2,100 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Draw & Guess Game</title>
+  <title>Draw & Guess</title>
   <style>
-    body {
-      font-family: sans-serif;
-      margin: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      background: #f0f0f0;
-    }
-
-    #canvas {
-      border: 2px solid #444;
-      background: white;
-      margin-top: 20px;
-      cursor: crosshair;
-    }
-
-    #connectPanel, #gamePanel {
-      margin-top: 20px;
-      text-align: center;
-    }
-
-    input, button {
-      padding: 8px;
-      margin: 5px;
-      border-radius: 5px;
-      border: 1px solid #ccc;
-    }
-
-    #chat {
-      margin-top: 20px;
-    }
-
-    #wordBox {
-      font-size: 20px;
-      font-weight: bold;
-      margin-bottom: 10px;
-      color: green;
-    }
-
-    #message {
-      margin-top: 10px;
-      color: blue;
-      font-weight: bold;
-    }
+    body { font-family: sans-serif; text-align: center; background: #f0f0f0; margin: 0; }
+    #canvas { border: 2px solid #333; background: white; cursor: crosshair; }
+    input, button { padding: 6px; margin: 5px; }
+    #chat, #wordBox, #guessInput { margin-top: 10px; }
+    #message { font-weight: bold; color: green; margin-top: 10px; }
   </style>
 </head>
 <body>
-
-  <h1>🎨 Draw & Guess</h1>
-
-  <div id="connectPanel">
-    <p>Your ID: <span id="your-id">...</span></p>
-    <input id="peer-id" placeholder="Enter Friend's ID">
-    <button onclick="connect()">Connect</button>
+  <h1>🎨 Draw & Guess (Firebase Edition)</h1>
+  <div>
+    Room: <input id="room" placeholder="Enter room ID">
+    <button onclick="joinGame()">Join</button>
+    <select id="role">
+      <option value="drawer">Drawer</option>
+      <option value="guesser">Guesser</option>
+    </select>
   </div>
-
-  <div id="gamePanel" style="display:none;">
+  
+  <div id="game" style="display:none;">
     <div id="wordBox"></div>
     <canvas id="canvas" width="500" height="400"></canvas>
     <div id="chat">
-      <input id="guessInput" placeholder="Guess the word">
+      <input id="guessInput" placeholder="Type your guess...">
       <button onclick="sendGuess()">Guess</button>
+      <div id="message"></div>
     </div>
-    <div id="message"></div>
   </div>
 
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
   <script>
-    const peer = new Peer();
-    let conn;
-    let isDrawer = false;
-    const words = ["house", "car", "cat", "dog", "tree", "fish", "pizza", "rocket"];
-    let currentWord = "";
-    let isDrawing = false;
-    let lastX, lastY;
+    // 🔐 Replace with your Firebase project config:
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT.firebaseio.com",
+      projectId: "YOUR_PROJECT",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
 
-    const yourIdSpan = document.getElementById("your-id");
-    const peerInput = document.getElementById("peer-id");
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-    const guessInput = document.getElementById("guessInput");
-    const wordBox = document.getElementById("wordBox");
-    const message = document.getElementById("message");
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
 
-    peer.on("open", id => {
-      yourIdSpan.textContent = id;
-    });
+    let canvas = document.getElementById("canvas");
+    let ctx = canvas.getContext("2d");
+    let isDrawing = false, lastX = 0, lastY = 0;
+    let role = "guesser", currentWord = "";
+    let roomId = "";
 
-    peer.on("connection", c => {
-      conn = c;
-      startGame(true); // you are host (drawer)
-      setupConn();
-    });
+    function joinGame() {
+      roomId = document.getElementById("room").value.trim();
+      role = document.getElementById("role").value;
+      if (!roomId) return alert("Enter room ID");
+      document.getElementById("game").style.display = "block";
 
-    function connect() {
-      const id = peerInput.value;
-      conn = peer.connect(id);
-      setupConn();
-      startGame(false); // you are guesser
-    }
+      if (role === "drawer") {
+        currentWord = randomWord();
+        db.ref(`rooms/${roomId}/word`).set(currentWord);
+        document.getElementById("wordBox").textContent = "Draw: " + currentWord;
+      } else {
+        db.ref(`rooms/${roomId}/word`).on("value", snap => {
+          currentWord = snap.val();
+          document.getElementById("wordBox").textContent = ""; // don't show word to guesser
+        });
+      }
 
-    function setupConn() {
-      conn.on("data", data => {
-        if (data.type === "draw") {
-          drawLine(data.x1, data.y1, data.x2, data.y2);
-        } else if (data.type === "word") {
-          currentWord = data.word;
-          wordBox.textContent = ""; // don't show word to guesser
-        } else if (data.type === "guess") {
-          if (isDrawer && data.text.toLowerCase() === currentWord.toLowerCase()) {
-            conn.send({ type: "correct" });
-            message.textContent = "They guessed it!";
-          }
-        } else if (data.type === "correct") {
-          message.textContent = "✅ Correct! You guessed the word!";
+      // Listen to drawing
+      db.ref(`rooms/${roomId}/drawing`).on("child_added", snap => {
+        const { x1, y1, x2, y2 } = snap.val();
+        drawLine(x1, y1, x2, y2);
+      });
+
+      // Listen to guesses
+      db.ref(`rooms/${roomId}/guess`).on("value", snap => {
+        const guess = snap.val();
+        if (role === "drawer" && guess?.toLowerCase() === currentWord?.toLowerCase()) {
+          db.ref(`rooms/${roomId}/message`).set("Correct! 🎉");
         }
       });
 
-      document.getElementById("connectPanel").style.display = "none";
-      document.getElementById("gamePanel").style.display = "block";
+      db.ref(`rooms/${roomId}/message`).on("value", snap => {
+        document.getElementById("message").textContent = snap.val() || "";
+      });
     }
 
-    function startGame(drawer) {
-      isDrawer = drawer;
-      if (drawer) {
-        currentWord = words[Math.floor(Math.random() * words.length)];
-        wordBox.textContent = "Draw: " + currentWord;
-        conn.send({ type: "word", word: currentWord });
-      }
+    function sendGuess() {
+      const guess = document.getElementById("guessInput").value;
+      db.ref(`rooms/${roomId}/guess`).set(guess);
     }
 
     function drawLine(x1, y1, x2, y2) {
@@ -145,29 +108,25 @@
     }
 
     canvas.addEventListener("mousedown", e => {
-      if (!isDrawer) return;
+      if (role !== "drawer") return;
       isDrawing = true;
-      lastX = e.offsetX;
-      lastY = e.offsetY;
+      [lastX, lastY] = [e.offsetX, e.offsetY];
+    });
+
+    canvas.addEventListener("mousemove", e => {
+      if (!isDrawing || role !== "drawer") return;
+      let x = e.offsetX, y = e.offsetY;
+      drawLine(lastX, lastY, x, y);
+      db.ref(`rooms/${roomId}/drawing`).push({ x1: lastX, y1: lastY, x2: x, y2: y });
+      [lastX, lastY] = [x, y];
     });
 
     canvas.addEventListener("mouseup", () => isDrawing = false);
     canvas.addEventListener("mouseout", () => isDrawing = false);
 
-    canvas.addEventListener("mousemove", e => {
-      if (!isDrawing || !isDrawer) return;
-      const newX = e.offsetX;
-      const newY = e.offsetY;
-      drawLine(lastX, lastY, newX, newY);
-      conn.send({ type: "draw", x1: lastX, y1: lastY, x2: newX, y2: newY });
-      lastX = newX;
-      lastY = newY;
-    });
-
-    function sendGuess() {
-      const guess = guessInput.value;
-      conn.send({ type: "guess", text: guess });
-      guessInput.value = "";
+    function randomWord() {
+      const words = ["cat", "dog", "car", "house", "pizza", "rocket"];
+      return words[Math.floor(Math.random() * words.length)];
     }
   </script>
 </body>
