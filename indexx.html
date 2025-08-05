@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Draw & Guess Game</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #f0f0f0;
+    }
+
+    #canvas {
+      border: 2px solid #444;
+      background: white;
+      margin-top: 20px;
+      cursor: crosshair;
+    }
+
+    #connectPanel, #gamePanel {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    input, button {
+      padding: 8px;
+      margin: 5px;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+    }
+
+    #chat {
+      margin-top: 20px;
+    }
+
+    #wordBox {
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: green;
+    }
+
+    #message {
+      margin-top: 10px;
+      color: blue;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎨 Draw & Guess</h1>
+
+  <div id="connectPanel">
+    <p>Your ID: <span id="your-id">...</span></p>
+    <input id="peer-id" placeholder="Enter Friend's ID">
+    <button onclick="connect()">Connect</button>
+  </div>
+
+  <div id="gamePanel" style="display:none;">
+    <div id="wordBox"></div>
+    <canvas id="canvas" width="500" height="400"></canvas>
+    <div id="chat">
+      <input id="guessInput" placeholder="Guess the word">
+      <button onclick="sendGuess()">Guess</button>
+    </div>
+    <div id="message"></div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script>
+    const peer = new Peer();
+    let conn;
+    let isDrawer = false;
+    const words = ["house", "car", "cat", "dog", "tree", "fish", "pizza", "rocket"];
+    let currentWord = "";
+    let isDrawing = false;
+    let lastX, lastY;
+
+    const yourIdSpan = document.getElementById("your-id");
+    const peerInput = document.getElementById("peer-id");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const guessInput = document.getElementById("guessInput");
+    const wordBox = document.getElementById("wordBox");
+    const message = document.getElementById("message");
+
+    peer.on("open", id => {
+      yourIdSpan.textContent = id;
+    });
+
+    peer.on("connection", c => {
+      conn = c;
+      startGame(true); // you are host (drawer)
+      setupConn();
+    });
+
+    function connect() {
+      const id = peerInput.value;
+      conn = peer.connect(id);
+      setupConn();
+      startGame(false); // you are guesser
+    }
+
+    function setupConn() {
+      conn.on("data", data => {
+        if (data.type === "draw") {
+          drawLine(data.x1, data.y1, data.x2, data.y2);
+        } else if (data.type === "word") {
+          currentWord = data.word;
+          wordBox.textContent = ""; // don't show word to guesser
+        } else if (data.type === "guess") {
+          if (isDrawer && data.text.toLowerCase() === currentWord.toLowerCase()) {
+            conn.send({ type: "correct" });
+            message.textContent = "They guessed it!";
+          }
+        } else if (data.type === "correct") {
+          message.textContent = "✅ Correct! You guessed the word!";
+        }
+      });
+
+      document.getElementById("connectPanel").style.display = "none";
+      document.getElementById("gamePanel").style.display = "block";
+    }
+
+    function startGame(drawer) {
+      isDrawer = drawer;
+      if (drawer) {
+        currentWord = words[Math.floor(Math.random() * words.length)];
+        wordBox.textContent = "Draw: " + currentWord;
+        conn.send({ type: "word", word: currentWord });
+      }
+    }
+
+    function drawLine(x1, y1, x2, y2) {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    canvas.addEventListener("mousedown", e => {
+      if (!isDrawer) return;
+      isDrawing = true;
+      lastX = e.offsetX;
+      lastY = e.offsetY;
+    });
+
+    canvas.addEventListener("mouseup", () => isDrawing = false);
+    canvas.addEventListener("mouseout", () => isDrawing = false);
+
+    canvas.addEventListener("mousemove", e => {
+      if (!isDrawing || !isDrawer) return;
+      const newX = e.offsetX;
+      const newY = e.offsetY;
+      drawLine(lastX, lastY, newX, newY);
+      conn.send({ type: "draw", x1: lastX, y1: lastY, x2: newX, y2: newY });
+      lastX = newX;
+      lastY = newY;
+    });
+
+    function sendGuess() {
+      const guess = guessInput.value;
+      conn.send({ type: "guess", text: guess });
+      guessInput.value = "";
+    }
+  </script>
+</body>
+</html>
