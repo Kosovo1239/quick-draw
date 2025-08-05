@@ -1,248 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Draw & Guess Multiplayer</title>
-<style>
-  body { margin: 0; font-family: Arial,sans-serif; background: #222; color: white; display: flex; flex-direction: column; align-items: center; }
-  #container { margin-top: 10px; display: flex; gap: 20px; }
-  canvas { background: #fff; border: 2px solid #444; cursor: crosshair; }
-  #chat { display: flex; flex-direction: column; width: 300px; height: 400px; background: #333; padding: 10px; border-radius: 6px; }
-  #messages { flex-grow: 1; overflow-y: auto; margin-bottom: 10px; }
-  #inputArea { display: flex; gap: 5px; }
-  input[type=text] { flex-grow: 1; padding: 6px; border-radius: 4px; border: none; }
-  button { padding: 6px 10px; border: none; background: #0b84ff; color: white; border-radius: 4px; cursor: pointer; }
-  button:hover { background: #056ed9; }
-  #status { margin-top: 10px; }
-  #role { margin-top: 10px; font-weight: bold; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI Chatbot</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0; padding: 0;
+      background: #121212;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background: #1e1e1e;
+      padding: 10px;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+    #login, #chat {
+      flex: 1;
+      display: none;
+      flex-direction: column;
+      padding: 16px;
+    }
+    #login.active, #chat.active {
+      display: flex;
+    }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid #444;
+      padding: 10px;
+      background: #222;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    .message {
+      margin: 5px 0;
+    }
+    .me { text-align: right; }
+    .bot { text-align: left; color: #90caf9; }
+
+    #input-area {
+      display: flex;
+      gap: 8px;
+    }
+    input, button {
+      padding: 10px;
+      font-size: 1rem;
+      border-radius: 8px;
+      border: none;
+    }
+    #msg-input {
+      flex: 1;
+    }
+    #login input {
+      margin-bottom: 10px;
+    }
+  </style>
 </head>
 <body>
 
-<h1>Draw & Guess Multiplayer</h1>
+<header>🤖 AI Chatbot</header>
 
-<div>
-  Room ID: <input type="text" id="roomInput" placeholder="Enter room ID" />
-  <button id="joinBtn">Join Room</button>
+<div id="login" class="active">
+  <h2>Login</h2>
+  <input id="username" type="text" placeholder="Enter your name" />
+  <input id="apikey" type="password" placeholder="OpenAI API Key (sk-...)" />
+  <button onclick="startChat()">Start Chat</button>
 </div>
 
-<div id="status"></div>
-<div id="role"></div>
-
-<div id="container" style="display:none;">
-  <canvas id="canvas" width="500" height="400"></canvas>
-
-  <div id="chat">
-    <div id="messages"></div>
-    <div id="inputArea">
-      <input type="text" id="guessInput" placeholder="Type your guess here..." autocomplete="off" />
-      <button id="sendGuessBtn">Send</button>
-    </div>
+<div id="chat">
+  <h3 id="user-display"></h3>
+  <div id="messages"></div>
+  <div id="input-area">
+    <input type="text" id="msg-input" placeholder="Type your message..." />
+    <button onclick="sendMessage()">Send</button>
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
-  const joinBtn = document.getElementById('joinBtn');
-  const roomInput = document.getElementById('roomInput');
-  const status = document.getElementById('status');
-  const roleDisplay = document.getElementById('role');
-  const container = document.getElementById('container');
+  let user = '';
+  let openaiKey = '';
 
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
-  const messages = document.getElementById('messages');
-  const guessInput = document.getElementById('guessInput');
-  const sendGuessBtn = document.getElementById('sendGuessBtn');
-
-  let peer, conn;
-  let isDrawer = false;
-  let currentWord = '';
-  let drawing = false;
-  let lastX, lastY;
-
-  const words = ['apple', 'car', 'house', 'tree', 'cat', 'dog', 'sun', 'moon', 'star', 'bird'];
-
-  // Drawing functions
-  function drawLine(x1, y1, x2, y2, color = 'black', width = 3) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-  }
-
-  // Clear canvas
-  function clearCanvas() {
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-
-  // Send drawing data
-  function sendDrawData(x1, y1, x2, y2) {
-    if (conn && conn.open) {
-      conn.send({ type: 'draw', x1, y1, x2, y2 });
-    }
-  }
-
-  // Mouse events for drawing
-  canvas.addEventListener('mousedown', e => {
-    if (!isDrawer) return;
-    drawing = true;
-    const rect = canvas.getBoundingClientRect();
-    lastX = e.clientX - rect.left;
-    lastY = e.clientY - rect.top;
-  });
-
-  canvas.addEventListener('mouseup', e => {
-    if (!isDrawer) return;
-    drawing = false;
-  });
-
-  canvas.addEventListener('mouseout', e => {
-    if (!isDrawer) return;
-    drawing = false;
-  });
-
-  canvas.addEventListener('mousemove', e => {
-    if (!isDrawer || !drawing) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    drawLine(lastX, lastY, x, y);
-    sendDrawData(lastX, lastY, x, y);
-    lastX = x;
-    lastY = y;
-  });
-
-  // Chat messaging
-  function addMessage(text) {
-    const p = document.createElement('p');
-    p.textContent = text;
-    messages.appendChild(p);
-    messages.scrollTop = messages.scrollHeight;
-  }
-
-  sendGuessBtn.addEventListener('click', () => {
-    const guess = guessInput.value.trim();
-    if (!guess || !conn || conn.open === false) return;
-    addMessage(`You: ${guess}`);
-    conn.send({ type: 'guess', guess });
-    guessInput.value = '';
-  });
-
-  guessInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter') sendGuessBtn.click();
-  });
-
-  // Handle peer connection and game logic
-  joinBtn.addEventListener('click', () => {
-    const roomId = roomInput.value.trim();
-    if (!roomId) {
-      alert('Please enter a room ID');
+  function startChat() {
+    user = document.getElementById('username').value.trim();
+    openaiKey = document.getElementById('apikey').value.trim();
+    if (!user || !openaiKey.startsWith('sk-')) {
+      alert('Please enter a valid name and OpenAI API key.');
       return;
     }
+    document.getElementById('login').classList.remove('active');
+    document.getElementById('chat').classList.add('active');
+    document.getElementById('user-display').textContent = '👋 Hello, ' + user;
+  }
 
-    joinBtn.disabled = true;
-    roomInput.disabled = true;
-    status.textContent = 'Connecting...';
+  async function sendMessage() {
+    const input = document.getElementById('msg-input');
+    const msg = input.value.trim();
+    if (!msg) return;
 
-    peer = new Peer();
+    addMessage(user + ': ' + msg, 'me');
+    input.value = '';
 
-    peer.on('open', id => {
-      status.textContent = `Your Peer ID: ${id}. Connecting to room ${roomId}...`;
-      // Try to connect to peer with roomId
-      conn = peer.connect(roomId);
+    addMessage('Bot is typing...', 'bot');
 
-      conn.on('open', () => {
-        status.textContent = `Connected to room: ${roomId}`;
-        container.style.display = 'flex';
-        setupGame(false); // If connecting to existing peer, you are guesser
-      });
+    const reply = await fetchAI(msg);
+    document.querySelector('.bot:last-child').textContent = 'AI: ' + reply;
+  }
 
-      conn.on('error', err => {
-        status.textContent = 'Connection error: ' + err;
-      });
+  function addMessage(text, cls) {
+    const div = document.createElement('div');
+    div.className = 'message ' + cls;
+    div.textContent = text;
+    document.getElementById('messages').appendChild(div);
+    document.getElementById('messages').scrollTop = 9999;
+  }
 
-      conn.on('close', () => {
-        status.textContent = 'Connection closed.';
-      });
-
-      conn.on('data', handleData);
+  async function fetchAI(message) {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + openaiKey
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: 'You are a friendly and helpful AI chatbot.' },
+          { role: 'user', content: message }
+        ]
+      })
     });
 
-    // If someone connects to you, accept connection (you are drawer)
-    peer.on('connection', connection => {
-      if (conn) {
-        connection.close(); // Only allow one connection
-        return;
-      }
-      conn = connection;
-      conn.on('open', () => {
-        status.textContent = `Player connected to your room: ${roomId}`;
-        container.style.display = 'flex';
-        setupGame(true); // You are drawer
-        // Send word to guesser
-        conn.send({ type: 'newWord', word: currentWord });
-      });
-
-      conn.on('data', handleData);
-    });
-  });
-
-  // Start or reset the game
-  function setupGame(startAsDrawer) {
-    isDrawer = startAsDrawer;
-    if (isDrawer) {
-      currentWord = words[Math.floor(Math.random() * words.length)];
-      roleDisplay.textContent = `You are the Drawer. Draw: ${currentWord}`;
-      clearCanvas();
-    } else {
-      roleDisplay.textContent = 'You are the Guesser. Start guessing!';
-      clearCanvas();
-    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || 'Sorry, I had trouble responding.';
   }
-
-  // Handle incoming data from peer
-  function handleData(data) {
-    if (data.type === 'draw' && !isDrawer) {
-      // Draw lines sent by drawer
-      drawLine(data.x1, data.y1, data.x2, data.y2);
-    } else if (data.type === 'guess' && isDrawer) {
-      addMessage(`Friend guesses: ${data.guess}`);
-      if (data.guess.toLowerCase() === currentWord.toLowerCase()) {
-        addMessage('Friend guessed correctly! You lose this round.');
-        conn.send({ type: 'correctGuess' });
-        startNextRound(false);
-      }
-    } else if (data.type === 'correctGuess' && !isDrawer) {
-      addMessage('You guessed correctly! You win this round.');
-      startNextRound(true);
-    } else if (data.type === 'newWord') {
-      currentWord = data.word;
-      roleDisplay.textContent = 'You are the Guesser. Start guessing!';
-      clearCanvas();
-    }
-  }
-
-  // Start next round swapping roles
-  function startNextRound(youAreDrawer) {
-    isDrawer = youAreDrawer;
-    if (isDrawer) {
-      currentWord = words[Math.floor(Math.random() * words.length)];
-      roleDisplay.textContent = `New round! You are the Drawer. Draw: ${currentWord}`;
-      addMessage('New round started. You are the Drawer.');
-      conn.send({ type: 'newWord', word: currentWord });
-    } else {
-      roleDisplay.textContent = 'New round! You are the Guesser. Start guessing!';
-      addMessage('New round started. You are the Guesser.');
-    }
-    clearCanvas();
-  }
-
 </script>
+
 </body>
 </html>
